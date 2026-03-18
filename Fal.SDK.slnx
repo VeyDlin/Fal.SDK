@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Fal.SDK.Tests/Fal.SDK.Tests.csproj" />
+  <Project Path="Fal.SDK/Fal.SDK.csproj" />
+</Solution>

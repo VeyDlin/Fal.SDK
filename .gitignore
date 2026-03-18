@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.DotSettings.user
+.fal-js/
+.fal-python/
+.fal-swift/
+*.Backup.tmp
+CLAUDE.md
