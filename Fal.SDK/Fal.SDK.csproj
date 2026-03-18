@@ -5,7 +5,7 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<RootNamespace>Fal.SDK</RootNamespace>
-		<Version>0.1.0</Version>
+		<Version>0.1.1</Version>
 		<PackageId>Fal.SDK</PackageId>
 		<Authors>VeyDlin</Authors>
 		<Description>Unofficial C# client SDK for fal.ai — run AI models, queue requests, stream results, upload files and connect via realtime WebSocket</Description>
