@@ -187,51 +187,78 @@ public class FalHttpClient {
             ? ridValues.FirstOrDefault() : null;
         string? errorType = null;
         string message = body;
+        JsonElement? responseBody = null;
+        List<ValidationErrorInfo>? fieldErrors = null;
+
+        // X-Fal-Retryable header
+        bool? isRetryable = null;
+        if (response.Headers.TryGetValues(FalHeaders.Retryable, out var retryValues)) {
+            string? retryStr = retryValues.FirstOrDefault();
+            if (bool.TryParse(retryStr, out var retryBool)) {
+                isRetryable = retryBool;
+            }
+        }
+
+        // X-Fal-Error-Type header (fallback for error_type field)
+        string? headerErrorType = response.Headers.TryGetValues(FalHeaders.ErrorType, out var etHeaderValues)
+            ? etHeaderValues.FirstOrDefault() : null;
 
         try {
             var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.TryGetProperty("detail", out var detail)) {
-                message = detail.GetString() ?? body;
-            }
-            if (doc.RootElement.TryGetProperty("error_type", out var et)) {
+            var root = doc.RootElement;
+            responseBody = root.Clone();
+
+            // error_type field (request/infrastructure errors)
+            if (root.TryGetProperty("error_type", out var et)) {
                 errorType = et.GetString();
             }
-        } catch (JsonException) {
-            // body is not JSON
-        }
 
-        if (errorType is null) {
-            errorType = response.Headers.TryGetValues(FalHeaders.ErrorType, out var etValues)
-                ? etValues.FirstOrDefault() : null;
-        }
+            if (root.TryGetProperty("detail", out var detail)) {
+                switch (detail.ValueKind) {
+                    // Format 2: Request/Infrastructure errors — detail is a string
+                    // { "detail": "Request timed out", "error_type": "request_timeout" }
+                    case JsonValueKind.String:
+                        message = detail.GetString() ?? body;
+                        break;
 
-        JsonElement? responseBody = null;
-        try {
-            responseBody = JsonDocument.Parse(body).RootElement.Clone();
-        } catch (JsonException) {
-            // not JSON
-        }
+                    // Format 1: Model/Validation errors — detail is an array of error objects
+                    // { "detail": [{ "loc": [...], "msg": "...", "type": "...", "url": "...", "ctx": {...} }] }
+                    case JsonValueKind.Array:
+                        fieldErrors = [];
+                        var messages = new List<string>();
+                        foreach (var item in detail.EnumerateArray()) {
+                            string msg = item.TryGetProperty("msg", out var msgProp) ? msgProp.GetString() ?? "" : "";
+                            string type = item.TryGetProperty("type", out var typeProp) ? typeProp.GetString() ?? "" : "";
+                            var loc = item.TryGetProperty("loc", out var locProp)
+                                ? locProp.EnumerateArray().Select(x => x.ToString()).ToList()
+                                : [];
+                            string? url = item.TryGetProperty("url", out var urlProp) ? urlProp.GetString() : null;
+                            JsonElement? ctx = item.TryGetProperty("ctx", out var ctxProp) ? ctxProp.Clone() : null;
+                            JsonElement? input = item.TryGetProperty("input", out var inputProp) ? inputProp.Clone() : null;
 
-        if (statusCode == 422) {
-            var fieldErrors = new List<ValidationErrorInfo>();
-            try {
-                var doc = JsonDocument.Parse(body);
-                if (doc.RootElement.TryGetProperty("detail", out var detailEl) && detailEl.ValueKind == JsonValueKind.Array) {
-                    foreach (var item in detailEl.EnumerateArray()) {
-                        fieldErrors.Add(new ValidationErrorInfo(
-                            message: item.GetProperty("msg").GetString() ?? "",
-                            location: item.GetProperty("loc").EnumerateArray().Select(x => x.ToString()).ToList(),
-                            type: item.GetProperty("type").GetString() ?? ""
-                        ));
-                    }
+                            fieldErrors.Add(new ValidationErrorInfo(msg, loc, type, url, ctx, input));
+                            messages.Add(msg);
+                        }
+                        message = messages.Count > 0 ? string.Join("; ", messages) : body;
+                        break;
+
+                    default:
+                        message = detail.ToString();
+                        break;
                 }
-            } catch {
-                // ignore parse errors
             }
+        } catch (JsonException) {
+            // body is not JSON, message stays as raw body
+        }
 
+        errorType ??= headerErrorType;
+
+        // Model/validation errors with detail array → FalValidationException
+        if (fieldErrors is not null) {
             throw new FalValidationException(
                 message: message,
                 requestId: requestId,
+                isRetryable: isRetryable,
                 fieldErrors: fieldErrors,
                 responseBody: responseBody
             );
@@ -242,6 +269,7 @@ public class FalHttpClient {
             statusCode: statusCode,
             requestId: requestId,
             errorType: errorType,
+            isRetryable: isRetryable,
             responseBody: responseBody
         );
     }

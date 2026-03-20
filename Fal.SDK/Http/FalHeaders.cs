@@ -9,6 +9,7 @@ public static class FalHeaders {
     public const string RequestId = "x-fal-request-id";
     public const string ErrorType = "x-fal-error-type";
     public const string FileName = "X-Fal-File-Name";
+    public const string Retryable = "X-Fal-Retryable";
 
     public const double MinRequestTimeoutSeconds = 1.0;
 
